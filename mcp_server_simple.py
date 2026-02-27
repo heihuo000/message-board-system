@@ -155,7 +155,6 @@ def read_messages(unread_only: bool = False, limit: int = 10,
             "priority": row["priority"] or "normal",
             "session_id": msg_session_id
         })
-    ]
 
     return {
         "success": True,
@@ -800,7 +799,7 @@ TOOLS = {
             },
             "capabilities": {
                 "type": "string",
-                "description": "能力描述（JSON字符串，可选，如 '["code","test"]'）"
+                "description": "能力描述（JSON字符串，可选，如 '[\"code\",\"test\"]'）"
             }
           },
           "required": ["agent_id"]
@@ -830,18 +829,12 @@ TOOLS = {
                 "type": "string",
                 "description": "筛选特定类型的代理（可选，如 'qwen'）"
             }
+          }
         },
         "handler": get_waiting_agents
     }
-},
-"get_protocol": {
-    "description": "获取 MCP 通信协议文档。用于新加入的AI快速了解协作规则、工具使用方法、任务分配流程等。返回最新的完整协议文档。",
-    "parameters": {
-      "type": "object",
-      "properties": {}
-    },
-    "handler": get_protocol
-}# 资源映射
+}
+# 资源映射
 RESOURCES = {
     "protocol://current": {
         "name": "MCP 通信协议",
