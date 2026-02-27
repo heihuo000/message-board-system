@@ -357,6 +357,60 @@ def get_tasks(assigned_to: Optional[str] = None, status: Optional[str] = None,
     }
 
 
+def get_my_tasks(agent_id: str, status: Optional[str] = None, 
+                 limit: int = 20) -> Dict[str, Any]:
+    """
+    查询自己的任务历史
+    
+    Args:
+        agent_id: 代理ID
+        status: 筛选状态（可选）
+        limit: 返回数量
+    
+    Returns:
+        自己的任务历史
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 查询作为执行者的任务
+    query = "SELECT * FROM tasks WHERE assigned_to = ?"
+    params = [agent_id]
+    
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    tasks = []
+    for row in rows:
+        tasks.append({
+            "id": row["id"],
+            "title": row["title"],
+            "description": row["description"],
+            "status": row["status"],
+            "assigned_to": row["assigned_to"],
+            "created_by": row["created_by"],
+            "priority": row["priority"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "result": row["result"]
+        })
+    
+    return {
+        "success": True,
+        "agent_id": agent_id,
+        "tasks": tasks,
+        "count": len(tasks)
+    }
+
+
 # 工具映射
 TOOLS = {
     "send_message": {
@@ -456,19 +510,31 @@ TOOLS = {
             "handler": update_task
         },
         "get_tasks": {
-            "description": "获取任务列表",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "assigned_to": {"type": "string", "description": "筛选分配给谁的任务"},
-                "status": {"type": "string", "description": "筛选状态"},
-                "limit": {"type": "integer", "description": "限制数量"}
-              }
+                "description": "获取任务列表",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "assigned_to": {"type": "string", "description": "筛选分配给谁的任务"},
+                    "status": {"type": "string", "description": "筛选状态"},
+                    "limit": {"type": "integer", "description": "限制数量"}
+                  }
+                },
+                "handler": get_tasks
             },
-            "handler": get_tasks
+            "get_my_tasks": {
+                "description": "查询自己的任务历史",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "agent_id": {"type": "string", "description": "你的代理ID（iflow/qwen/dnf-pvf-analyse/pvf-analyzer）"},
+                    "status": {"type": "string", "description": "筛选状态（可选）"},
+                    "limit": {"type": "integer", "description": "返回数量，默认20"}
+                  },
+                  "required": ["agent_id"]
+                },
+                "handler": get_my_tasks
+            }
         }
-    }
-
 # 资源映射
 RESOURCES = {
     "protocol://current": {
