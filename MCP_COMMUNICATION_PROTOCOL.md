@@ -385,6 +385,9 @@ get_my_tasks(agent_id="dnf-pvf-analyse", limit=10)
 | `update_task` | 更新任务状态 | `update_task(task_id="xxx", status="completed", result="完成")` |
 | `get_tasks` | 获取任务列表 | `get_tasks(assigned_to="dnf-pvf-analyse", status="pending")` |
 | `get_my_tasks` | 查询自己的任务历史 | `get_my_tasks(agent_id="your_id", status="completed")` |
+| `register_waiting` | 注册等待状态 | `register_waiting(agent_id="iflow1", agent_type="iflow")` |
+| `unregister_waiting` | 取消等待状态 | `unregister_waiting(agent_id="iflow1")` |
+| `get_waiting_agents` | 获取等待中的代理列表 | `get_waiting_agents(agent_type="qwen")` |
 
 **批量读取优势**：
 - ✅ 避免漏读消息
@@ -394,6 +397,11 @@ get_my_tasks(agent_id="dnf-pvf-analyse", limit=10)
 - ✅ 快速找到历史任务
 - ✅ 了解自己的工作负载
 - ✅ 复用之前的任务结果
+
+**等待状态管理优势**：
+- ✅ 查询空闲代理，智能分配任务
+- ✅ 代理按序接收任务，避免重复分配
+- ✅ 实时监控代理工作状态
 - ✅ 提高通信效率
 
 ### 命令行工具
@@ -587,6 +595,85 @@ for task in tasks:
 3. **必须调用等待**：发送回复后必须调用 `wait_for_message(timeout=300)`
 4. **超时时间**：默认 300 秒（5分钟）
 5. **循环执行**：始终保持待命状态
+
+### 等待状态管理
+
+**工作流程**：
+```
+代理进入等待 → 注册等待状态 → 等待任务 → 收到任务 → 取消等待 → 执行任务 → 重新注册等待
+```
+
+**代理（执行者）流程**：
+
+```python
+# 步骤1：注册等待状态
+register_waiting(
+    agent_id="iflow1",
+    agent_type="iflow",
+    capabilities='["code","test","debug"]'
+)
+
+# 步骤2：进入阻塞等待
+result = wait_for_message(
+    timeout=300,
+    client_id="iflow1"
+)
+
+# 步骤3：收到任务，取消等待
+unregister_waiting(agent_id="iflow1")
+
+# 步骤4：执行任务
+# ... 执行业务逻辑 ...
+
+# 步骤5：任务完成，重新注册等待
+register_waiting(agent_id="iflow1", agent_type="iflow")
+
+# 步骤6：发送完成通知
+send_message(content="任务完成", sender="iflow1")
+
+# 步骤7：返回等待状态
+wait_for_message(timeout=300, client_id="iflow1")
+```
+
+**任务分配者（iflow）流程**：
+
+```python
+# 步骤1：查询等待中的代理
+waiting = get_waiting_agents()
+
+# 步骤2：选择合适的代理
+if waiting['waiting_agents']:
+    # 按等待时间排序，优先分配给等待最久的
+    agent = waiting['waiting_agents'][0]
+    
+    # 步骤3：创建任务
+    task = create_task(
+        title="分析代码",
+        assigned_to=agent['agent_id'],
+        created_by="iflow"
+    )
+    
+    # 步骤4：发送任务通知
+    send_message(
+        content=f"新任务: {task['task_id']}",
+        sender="iflow"
+    )
+else:
+    print("没有空闲代理，稍后重试")
+```
+
+**等待状态特性**：
+- ✅ 按等待时间排序，公平分配任务
+- ✅ 支持按代理类型筛选
+- ✅ 记录等待时长，优先分配给等待最久的
+- ✅ 支持能力描述，智能匹配
+- ✅ 自动超时清理（长时间未响应的代理）
+
+**最佳实践**：
+- 进入等待前先注册
+- 收到任务立即取消注册
+- 任务完成后重新注册
+- 持续循环，保持待命状态
 
 ### AI代理ID注册
 

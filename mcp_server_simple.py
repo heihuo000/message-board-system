@@ -475,6 +475,114 @@ def get_my_tasks(agent_id: str, status: Optional[str] = None,
     }
 
 
+def register_waiting(agent_id: str, agent_type: str = "generic", 
+                     capabilities: Optional[str] = None) -> Dict[str, Any]:
+    """
+    注册等待状态（进入等待队列）
+    
+    Args:
+        agent_id: 代理ID（如 iflow1、qwen2）
+        agent_type: 代理类型（iflow、qwen、dnf-pvf-analyse、pvf-analyzer）
+        capabilities: 能力描述（JSON字符串，如 ["code","test"]）
+    
+    Returns:
+        注册结果
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    waiting_id = f"wait_{agent_id}_{int(time.time())}"
+    waiting_since = int(time.time())
+    
+    # 使用REPLACE实现"已存在则更新，不存在则插入"
+    cursor.execute("""
+        INSERT OR REPLACE INTO waiting_agents (id, agent_id, agent_type, waiting_since, capabilities)
+        VALUES (?, ?, ?, ?, ?)
+    """, (waiting_id, agent_id, agent_type, waiting_since, capabilities))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "agent_id": agent_id,
+        "waiting_since": waiting_since,
+        "message": f"{agent_id} 已进入等待状态"
+    }
+
+
+def unregister_waiting(agent_id: str) -> Dict[str, Any]:
+    """
+    取消等待状态（收到任务后调用）
+    
+    Args:
+        agent_id: 代理ID
+    
+    Returns:
+        取消结果
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM waiting_agents WHERE agent_id = ?", (agent_id,))
+    
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "agent_id": agent_id,
+        "removed": count > 0,
+        "message": f"{agent_id} 已退出等待状态" if count > 0 else f"{agent_id} 不在等待状态"
+    }
+
+
+def get_waiting_agents(agent_type: Optional[str] = None) -> Dict[str, Any]:
+    """
+    获取等待中的代理列表（按等待时间排序）
+    
+    Args:
+        agent_type: 筛选特定类型的代理（可选）
+    
+    Returns:
+        等待中的代理列表
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = "SELECT * FROM waiting_agents WHERE 1=1"
+    params = []
+    
+    if agent_type:
+        query += " AND agent_type = ?"
+        params.append(agent_type)
+    
+    query += " ORDER BY waiting_since ASC"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    agents = []
+    for row in rows:
+        agents.append({
+            "id": row["id"],
+            "agent_id": row["agent_id"],
+            "agent_type": row["agent_type"],
+            "waiting_since": row["waiting_since"],
+            "waiting_duration": int(time.time()) - row["waiting_since"],
+            "capabilities": row["capabilities"]
+        })
+    
+    return {
+        "success": True,
+        "waiting_agents": agents,
+        "count": len(agents),
+        "agent_type": agent_type
+    }
+
+
 # 工具映射
 TOOLS = {
     "send_message": {
@@ -673,6 +781,54 @@ TOOLS = {
           "required": ["agent_id"]
         },
         "handler": get_my_tasks
+    },
+    "register_waiting": {
+        "description": "注册等待状态。进入等待队列前调用此工具，表示自己已准备好接收任务。其他代理可以查询到你的等待状态并分配任务。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+                "type": "string",
+                "description": "你的代理ID（必填，如 iflow1、qwen2）"
+            },
+            "agent_type": {
+                "type": "string",
+                "description": "代理类型（iflow/qwen/dnf-pvf-analyse/pvf-analyzer）"
+            },
+            "capabilities": {
+                "type": "string",
+                "description": "能力描述（JSON字符串，可选，如 '["code","test"]'）"
+            }
+          },
+          "required": ["agent_id"]
+        },
+        "handler": register_waiting
+    },
+    "unregister_waiting": {
+        "description": "取消等待状态。收到任务开始执行时调用此工具，退出等待队列。任务完成后需重新注册等待状态。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+                "type": "string",
+                "description": "你的代理ID（必填）"
+            }
+          },
+          "required": ["agent_id"]
+        },
+        "handler": unregister_waiting
+    },
+    "get_waiting_agents": {
+        "description": "获取等待中的代理列表。用于查询哪些代理正在等待任务，以便分配任务给空闲的代理。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "agent_type": {
+                "type": "string",
+                "description": "筛选特定类型的代理（可选，如 'qwen'）"
+            }
+        },
+        "handler": get_waiting_agents
     }
 }# 资源映射
 RESOURCES = {
@@ -911,6 +1067,19 @@ def main():
                 created_at INTEGER NOT NULL
             )
         """)
+        
+        # 创建等待状态表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS waiting_agents (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                agent_type TEXT NOT NULL,
+                waiting_since INTEGER NOT NULL,
+                capabilities TEXT,
+                UNIQUE (agent_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_waiting_agents_agent_id ON waiting_agents(agent_id)")
         
         conn.commit()
         conn.close()
