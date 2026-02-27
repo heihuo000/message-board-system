@@ -139,13 +139,19 @@ def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None) -> Dic
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 查询新消息
-        query = "SELECT * FROM messages WHERE 1=1"
+        # 查询未读消息
+        query = "SELECT * FROM messages WHERE read = 0"
         params = []
         
         if last_seen:
             query += " AND timestamp > ?"
             params.append(last_seen)
+        
+        # 排除已检查的消息
+        if checked_ids:
+            placeholders = ",".join(["?" for _ in checked_ids])
+            query += f" AND id NOT IN ({placeholders})"
+            params.extend(list(checked_ids))
         
         query += " ORDER BY timestamp ASC LIMIT 1"
         
@@ -155,6 +161,7 @@ def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None) -> Dic
         
         if row:
             # 发现新消息
+            checked_ids.add(row["id"])
             return {
                 "success": True,
                 "message": {
