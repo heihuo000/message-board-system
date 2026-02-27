@@ -20,7 +20,7 @@ class ConnectionPool:
     def __init__(
         self,
         db_path: str,
-        max_connections: int = 5,
+        max_connections: int = 3,  # Termux 环境降低到 3
         timeout: float = 30.0
     ):
         """
@@ -28,7 +28,7 @@ class ConnectionPool:
 
         Args:
             db_path: 数据库路径
-            max_connections: 最大连接数
+            max_connections: 最大连接数（Termux 建议 2-3）
             timeout: 获取连接的超时时间（秒）
         """
         self.db_path = Path(db_path).expanduser()
@@ -57,16 +57,22 @@ class ConnectionPool:
             raise ConnectionError(f"连接池初始化失败: {e}")
 
     def _create_connection(self) -> sqlite3.Connection:
-        """创建新的数据库连接"""
+        """创建新的数据库连接（优化版）"""
         try:
             conn = sqlite3.connect(
                 str(self.db_path),
                 check_same_thread=False,
                 timeout=self.timeout
             )
-            # 启用 WAL 模式，提升并发性能
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
+            # 优化设置（Termux 环境友好）
+            conn.execute("PRAGMA journal_mode=WAL")  # 写前日志模式
+            conn.execute("PRAGMA synchronous=NORMAL")  # 平衡性能和安全性
+            conn.execute("PRAGMA cache_size=-2000")  # 2MB 缓存
+            conn.execute("PRAGMA temp_store=MEMORY")  # 临时表使用内存
+            conn.execute("PRAGMA mmap_size=268435456")  # 256MB 内存映射
+            conn.execute("PRAGMA page_size=4096")  # 4KB 页面大小
+            conn.execute("PRAGMA locking_mode=NORMAL")  # 正常锁定模式
+            
             return conn
         except sqlite3.Error as e:
             logger.error(f"创建数据库连接失败: {e}")
