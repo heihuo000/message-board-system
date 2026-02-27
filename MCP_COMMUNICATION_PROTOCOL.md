@@ -157,63 +157,83 @@ while True:
 **问题背景**：
 如果同一个AI代理（如iflow）同时启动多个实例，会导致身份冲突，消息混乱。
 
-**解决方案：会话ID机制**
+**解决方案：实例序号机制**
 
-每个AI实例在启动时生成唯一的session_id，用于区分同一代理的不同实例。
+每个AI实例在启动时生成唯一的session_id，使用序号命名方式，便于识别和管理。
+
+**命名规则**：
+- 代理ID（固定）：iflow、qwen、dnf-pvf-analyse、pvf-analyzer
+- 实例ID（可变）：iflow1、iflow2、iflow3...（序号递增）
+- 完整标识：agent_id + 实例序号
 
 **使用方法**：
 
-**1. 首次启动时生成session_id**
+**1. 自动生成session_id**
 ```python
-import uuid
-
-# 生成唯一会话ID
-session_id = str(uuid.uuid4())
-
-# 保存到环境变量或配置文件
+# 在MCP配置文件中或启动脚本中自动生成
 import os
+
+# 获取代理ID（从配置）
+agent_id = "iflow"  # 从MCP配置读取
+
+# 查找已存在的实例
+existing_sessions = get_existing_sessions(agent_id)  # [iflow1, iflow2]
+next_number = len(existing_sessions) + 1
+
+# 生成session_id
+session_id = f"{agent_id}{next_number}"  # iflow3
+
+# 保存到环境变量
 os.environ['AGENT_SESSION_ID'] = session_id
 ```
 
-**2. 发送消息时携带session_id**
+**2. 发送消息时使用sender字段**
 ```python
+# 使用完整的实例ID作为sender
 send_message(
     content="任务执行中",
-    sender="iflow",
-    session_id=session_id  # 携带会话ID
+    sender=session_id  # 如 "iflow3"
 )
 ```
 
-**3. 等待消息时指定session_id**
+**3. 等待消息时过滤自己的消息**
 ```python
-# 只等待属于自己会话的消息
+# 只等待非自己的消息（不包括iflow3的消息）
 wait_for_message(
     timeout=300,
-    client_id="iflow",
-    session_id=session_id  # 只等待此会话的消息
+    client_id=session_id  # 过滤掉iflow3的消息
 )
 ```
 
-**4. 读取消息时筛选session_id**
+**4. 读取消息时筛选发送者**
 ```python
-# 只读取自己会话的消息
+# 只读取特定实例的消息
 messages = read_messages(
     unread_only=True,
-    session_id=session_id
+    sender="iflow1"  # 只读取iflow1的消息
 )
 ```
 
 **session_id特性**：
-- ✅ 每个实例有唯一标识
-- ✅ 消息隔离，避免混淆
+- ✅ 序号命名，易于识别（iflow1、iflow2、iflow3）
+- ✅ 消息隔离，不同实例互不干扰
 - ✅ 支持同一代理多实例并行
-- ✅ 兼容旧版本（未指定则不过滤）
+- ✅ 便于调试和追踪（从名称就能看出是第几个实例）
+- ✅ 兼容旧版本（可继续使用UUID）
+
+**命名示例**：
+```
+iflow  →  iflow1, iflow2, iflow3...
+qwen   →  qwen1, qwen2, qwen3...
+dnf-pvf-analyse  →  dnf-pvf-analyse1, dnf-pvf-analyse2...
+```
 
 **最佳实践**：
-- 每个实例启动时生成session_id
-- 所有消息操作都携带session_id
-- 将session_id保存到环境变量或配置
-- 重启实例时重新生成session_id
+- 每个实例启动时自动分配序号
+- 使用完整实例ID（如iflow3）作为sender
+- 将session_id保存到环境变量
+- 重启实例时可选择保持或重新生成序号
+- 调试时从session_id直接看出是哪个实例
 
 ### 异常处理机制
 
