@@ -256,6 +256,107 @@ def get_protocol() -> Dict[str, Any]:
         }
 
 
+def create_task(title: str, description: str = "", assigned_to: str = "unknown", 
+                created_by: str = "unknown", priority: str = "normal") -> Dict[str, Any]:
+    """创建任务"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    task_id = str(uuid.uuid4())
+    now = int(time.time())
+    
+    cursor.execute("""
+        INSERT INTO tasks (id, title, description, status, assigned_to, created_by, priority, created_at, updated_at)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+    """, (task_id, title, description, assigned_to, created_by, priority, now, now))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "task_id": task_id,
+        "created_at": now
+    }
+
+
+def update_task(task_id: str, status: Optional[str] = None, result: Optional[str] = None) -> Dict[str, Any]:
+    """更新任务状态"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    now = int(time.time())
+    
+    if status and result:
+        cursor.execute("""
+            UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?
+        """, (status, result, now, task_id))
+    elif status:
+        cursor.execute("""
+            UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?
+        """, (status, now, task_id))
+    elif result:
+        cursor.execute("""
+            UPDATE tasks SET result = ?, updated_at = ? WHERE id = ?
+        """, (result, now, task_id))
+    
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "updated": count > 0,
+        "updated_at": now
+    }
+
+
+def get_tasks(assigned_to: Optional[str] = None, status: Optional[str] = None, 
+              limit: int = 10) -> Dict[str, Any]:
+    """获取任务列表"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = "SELECT * FROM tasks WHERE 1=1"
+    params = []
+    
+    if assigned_to:
+        query += " AND assigned_to = ?"
+        params.append(assigned_to)
+    
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    tasks = []
+    for row in rows:
+        tasks.append({
+            "id": row["id"],
+            "title": row["title"],
+            "description": row["description"],
+            "status": row["status"],
+            "assigned_to": row["assigned_to"],
+            "created_by": row["created_by"],
+            "priority": row["priority"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "result": row["result"]
+        })
+    
+    return {
+        "success": True,
+        "tasks": tasks,
+        "count": len(tasks)
+    }
+
+
 # 工具映射
 TOOLS = {
     "send_message": {
@@ -319,15 +420,54 @@ TOOLS = {
         "handler": get_status
     },
     "get_protocol": {
-        "description": "获取 MCP 通信协议文档",
-        "parameters": {
-            "type": "object",
-            "properties": {}
+            "description": "获取 MCP 通信协议文档",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            },
+            "handler": get_protocol
         },
-        "handler": get_protocol
+        "create_task": {
+            "description": "创建新任务",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "title": {"type": "string", "description": "任务标题"},
+                "description": {"type": "string", "description": "任务描述"},
+                "assigned_to": {"type": "string", "description": "分配给谁"},
+                "created_by": {"type": "string", "description": "创建者"},
+                "priority": {"type": "string", "enum": ["urgent", "high", "normal", "low"]}
+              },
+              "required": ["title"]
+            },
+            "handler": create_task
+        },
+        "update_task": {
+            "description": "更新任务状态",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "task_id": {"type": "string", "description": "任务ID"},
+                "status": {"type": "string", "enum": ["pending", "running", "completed", "failed"]},
+                "result": {"type": "string", "description": "执行结果"}
+              },
+              "required": ["task_id"]
+            },
+            "handler": update_task
+        },
+        "get_tasks": {
+            "description": "获取任务列表",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "assigned_to": {"type": "string", "description": "筛选分配给谁的任务"},
+                "status": {"type": "string", "description": "筛选状态"},
+                "limit": {"type": "integer", "description": "限制数量"}
+              }
+            },
+            "handler": get_tasks
+        }
     }
-}
-
 
 # 资源映射
 RESOURCES = {
@@ -534,6 +674,39 @@ def main():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(read)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)")
+        
+        # 创建任务表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'pending',
+                assigned_to TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                priority TEXT DEFAULT 'normal',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                result TEXT,
+                FOREIGN KEY (assigned_to) REFERENCES agents(id),
+                FOREIGN KEY (created_by) REFERENCES agents(id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at)")
+        
+        # 创建AI代理表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                description TEXT,
+                created_at INTEGER NOT NULL
+            )
+        """)
+        
         conn.commit()
         conn.close()
     

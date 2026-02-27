@@ -880,6 +880,145 @@ class MessageBoardClient:
         
         return count
 
+    def create_task(self, title: str, description: str = "", assigned_to: str = "unknown", 
+                    created_by: str = "unknown", priority: str = "normal") -> Dict:
+        """
+        创建新任务
+        
+        Args:
+            title: 任务标题
+            description: 任务描述
+            assigned_to: 分配给谁
+            created_by: 创建者
+            priority: 优先级 (urgent/high/normal/low)
+        
+        Returns:
+            任务信息
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        task_id = str(uuid.uuid4())
+        now = int(time.time())
+        
+        cursor.execute("""
+            INSERT INTO tasks (id, title, description, status, assigned_to, created_by, priority, created_at, updated_at)
+            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+        """, (task_id, title, description, assigned_to, created_by, priority, now, now))
+        
+        conn.commit()
+        conn.close()
+        
+        if self.enable_logging:
+            logger.info(f"任务已创建: {task_id} - {title} (分配给: {assigned_to})")
+        
+        return {
+            "task_id": task_id,
+            "title": title,
+            "status": "pending",
+            "assigned_to": assigned_to,
+            "created_at": now
+        }
+
+    def update_task(self, task_id: str, status: Optional[str] = None, 
+                    result: Optional[str] = None) -> Dict:
+        """
+        更新任务状态
+        
+        Args:
+            task_id: 任务ID
+            status: 新状态 (pending/running/completed/failed)
+            result: 执行结果
+        
+        Returns:
+            更新结果
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        now = int(time.time())
+        
+        if status and result:
+            cursor.execute("""
+                UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?
+            """, (status, result, now, task_id))
+        elif status:
+            cursor.execute("""
+                UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?
+            """, (status, now, task_id))
+        elif result:
+            cursor.execute("""
+                UPDATE tasks SET result = ?, updated_at = ? WHERE id = ?
+            """, (result, now, task_id))
+        
+        count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if self.enable_logging:
+            logger.info(f"任务已更新: {task_id} (状态: {status})")
+        
+        return {
+            "task_id": task_id,
+            "updated": count > 0,
+            "updated_at": now
+        }
+
+    def get_tasks(self, assigned_to: Optional[str] = None, status: Optional[str] = None, 
+                  limit: int = 10) -> List[Dict]:
+        """
+        获取任务列表
+        
+        Args:
+            assigned_to: 筛选分配给谁的任务
+            status: 筛选状态
+            limit: 限制数量
+        
+        Returns:
+            任务列表
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        query = "SELECT * FROM tasks WHERE 1=1"
+        params = []
+        
+        if assigned_to:
+            query += " AND assigned_to = ?"
+            params.append(assigned_to)
+        
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        tasks = []
+        for row in rows:
+            tasks.append({
+                "id": row["id"],
+                "title": row["title"],
+                "description": row["description"],
+                "status": row["status"],
+                "assigned_to": row["assigned_to"],
+                "created_by": row["created_by"],
+                "priority": row["priority"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "result": row["result"]
+            })
+        
+        if self.enable_logging:
+            logger.info(f"查询任务: 找到 {len(tasks)} 条")
+        
+        return tasks
+
 
 # ==================== 便捷函数 ====================
 

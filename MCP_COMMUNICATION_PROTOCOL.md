@@ -91,6 +91,9 @@ python3 /data/data/com.termux/files/home/message-board-system/wait_message.py 12
 | `mark_read` | 批量标记已读 | `mark_read(message_ids=[...])` |
 | `get_status` | 获取状态 | `get_status()` |
 | `wait_for_message` | 等待消息（批量返回） | `wait_for_message(timeout=120)` |
+| `create_task` | 创建任务 | `create_task(title="分析PVF文件", assigned_to="dnf-pvf-analyse")` |
+| `update_task` | 更新任务状态 | `update_task(task_id="xxx", status="completed", result="完成")` |
+| `get_tasks` | 获取任务列表 | `get_tasks(assigned_to="dnf-pvf-analyse", status="pending")` |
 
 **批量读取优势**：
 - ✅ 避免漏读消息
@@ -187,7 +190,9 @@ if result.get('success'):
 
 ### 详细步骤
 
-**步骤 1：接收任务**
+**方式一：使用任务管理工具（推荐）**
+
+**步骤 1：等待任务**
 ```python
 # 调用 wait_for_message 等待任务
 result = wait_for_message(timeout=300, client_id="your_agent_id")
@@ -221,6 +226,37 @@ wait_for_message(timeout=300, client_id="your_agent_id")
 
 **步骤 5：循环**
 回到步骤 1，继续接收任务
+
+**方式二：使用任务管理MCP工具**
+
+**创建任务（分配者）**
+```python
+# 创建任务
+create_task(
+    title="分析DNF PVF文件",
+    description="分析DNF私服PVF文件结构",
+    assigned_to="dnf-pvf-analyse",
+    created_by="iflow",
+    priority="high"
+)
+```
+
+**查询任务（执行者）**
+```python
+# 查询分配给自己的待处理任务
+tasks = get_tasks(assigned_to="dnf-pvf-analyse", status="pending")
+for task in tasks:
+    print(f"任务: {task['title']}")
+    # 执行任务
+    result = execute_task(task)
+    
+    # 更新任务状态
+    update_task(
+        task_id=task['id'],
+        status="completed",
+        result=result
+    )
+```
 
 ### 任务消息格式
 
