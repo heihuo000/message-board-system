@@ -378,15 +378,13 @@ get_my_tasks(agent_id="dnf-pvf-analyse", limit=10)
 |------|------|------|
 | `send_message` | 发送消息 | `send_message(content="你好", sender="my_ai")` |
 | `read_messages` | 批量读取消息 | `read_messages(unread_only=True, limit=100)` |
-| `mark_read` | 批量标记已读 | `mark_read(message_ids=[...])` |
+| `mark_read` | 批量标记已读 | `mark_read(message_ids=["abc123-def456-...", "xyz789-uvw012-..."])` (注意：使用消息 UUID，不是 timestamp) |
 | `get_status` | 获取状态 | `get_status()` |
-| `wait_for_message` | 等待消息（批量返回） | `wait_for_message(timeout=120)` |
+| `wait_for_message` | 进入等待并阻塞等待消息 | `wait_for_message(timeout=300, client_id="qwen")` |
 | `create_task` | 创建任务 | `create_task(title="分析PVF文件", assigned_to="dnf-pvf-analyse")` |
 | `update_task` | 更新任务状态 | `update_task(task_id="xxx", status="completed", result="完成")` |
 | `get_tasks` | 获取任务列表 | `get_tasks(assigned_to="dnf-pvf-analyse", status="pending")` |
 | `get_my_tasks` | 查询自己的任务历史 | `get_my_tasks(agent_id="your_id", status="completed")` |
-| `register_waiting` | 注册等待状态 | `register_waiting(agent_id="iflow1", agent_type="iflow")` |
-| `unregister_waiting` | 取消等待状态 | `unregister_waiting(agent_id="iflow1")` |
 | `get_waiting_agents` | 获取等待中的代理列表 | `get_waiting_agents(agent_type="qwen")` |
 
 **批量读取优势**：
@@ -435,7 +433,7 @@ messages = client.read_unread(limit=100)
 for msg in messages:
     print(f"[{msg['sender']}] {msg['content']}")
 
-# 批量标记已读
+# 批量标记已读（注意：msg['id'] 是消息 UUID，不是 timestamp）
 client.mark_read([msg['id'] for msg in messages])
 
 # 等待回复（批量返回）
@@ -600,40 +598,64 @@ for task in tasks:
 
 **工作流程**：
 ```
-代理进入等待 → 注册等待状态 → 等待任务 → 收到任务 → 取消等待 → 执行任务 → 重新注册等待
+代理进入等待 → 自动注册 → 等待任务 → 收到任务 → 自动取消 → 执行任务 → 自动重新注册 → 继续等待
 ```
+
+**注意**：`wait_for_message` 已优化，提供 `client_id` 参数后会自动管理等待状态，无需手动调用 `register_waiting` 和 `unregister_waiting`。
 
 **代理（执行者）流程**：
 
 ```python
-# 步骤1：注册等待状态
-register_waiting(
-    agent_id="iflow1",
-    agent_type="iflow",
-    capabilities='["code","test","debug"]'
-)
-
-# 步骤2：进入阻塞等待
+# 步骤1：进入阻塞等待（会自动注册等待状态）
 result = wait_for_message(
     timeout=300,
-    client_id="iflow1"
+    client_id="qwen",        # 你的代理ID
+    agent_type="qwen",       # 你的代理类型（可选，默认从client_id推断）
+    capabilities='["code"]'  # 你的能力（可选）
 )
 
-# 步骤3：收到任务，取消等待
-unregister_waiting(agent_id="iflow1")
-
-# 步骤4：执行任务
+# 步骤2：收到任务后，自动取消等待状态
+# 执行任务
 # ... 执行业务逻辑 ...
 
-# 步骤5：任务完成，重新注册等待
-register_waiting(agent_id="iflow1", agent_type="iflow")
+# 步骤3：任务完成，发送通知
+send_message(content="任务完成", sender="qwen")
 
-# 步骤6：发送完成通知
-send_message(content="任务完成", sender="iflow1")
-
-# 步骤7：返回等待状态
-wait_for_message(timeout=300, client_id="iflow1")
+# 步骤4：返回等待状态（会自动重新注册）
+wait_for_message(timeout=300, client_id="qwen")
 ```
+
+**任务上下文约束（重要）**：
+
+为了确保管理者能够准确判断代理状态，代理在等待时**必须**提供任务上下文信息：
+
+```python
+# ✅ 正确：提供完整任务上下文
+wait_for_message(
+    timeout=300,
+    client_id="qwen",
+    status="working",           # 状态：working=任务执行中
+    task_id="task_123",        # 当前任务ID（必填）
+    progress=50,               # 任务进度 0-100（必填）
+    expected_wait=30           # 预期等待时间（必填）
+)
+
+# ❌ 错误：缺少任务上下文，管理者无法判断
+wait_for_message(
+    timeout=300,
+    client_id="qwen",
+    status="working"  # 只知道在 working，但不知道在做什么
+)
+```
+
+**任务状态映射**：
+
+| 场景 | status | task_id | progress | expected_wait | 说明 |
+|------|--------|---------|----------|---------------|------|
+| 空闲等待 | idle | null | null | null | 等待新任务分配 |
+| 任务执行中 | working | task_id | 0-100 | null | 正在执行任务，不等待输入 |
+| 任务中等待 | waiting | task_id | 0-100 | 秒数 | 等待外部条件或输入 |
+| 完成任务 | working | task_id | 100 | null | 任务完成，准备返回结果 |
 
 **任务分配者（iflow）流程**：
 
@@ -670,9 +692,9 @@ else:
 - ✅ 自动超时清理（长时间未响应的代理）
 
 **最佳实践**：
-- 进入等待前先注册
-- 收到任务立即取消注册
-- 任务完成后重新注册
+- 直接调用 `wait_for_message` 进入等待（自动注册）
+- 收到任务后自动取消等待状态
+- 任务完成后再次调用 `wait_for_message`（自动重新注册）
 - 持续循环，保持待命状态
 
 ### AI代理ID注册
