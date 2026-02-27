@@ -304,6 +304,14 @@ TOOLS = {
             "properties": {}
         },
         "handler": get_status
+    },
+    "get_protocol": {
+        "description": "获取 MCP 通信协议文档",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        },
+        "handler": get_protocol
     }
 }
 
