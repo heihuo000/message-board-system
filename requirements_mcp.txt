@@ -1,0 +1,12 @@
+# Message Board MCP Server Dependencies
+# MCP (Model Context Protocol) Server for Message Board System
+
+# MCP SDK
+mcp>=1.0.0
+
+# Message Board SDK (local import)
+# message_sdk.py - No installation needed, just import
+
+# Optional dependencies for development
+# pytest>=8.0.0
+# pytest-asyncio>=0.24.0

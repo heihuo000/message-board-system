@@ -1,0 +1,17 @@
+# Claude Code Hook 配置
+# 放置位置：~/.claude-code/hooks/check-messages.toml
+
+name = "check-messages"
+description = "Check for new messages from other AI CLI clients"
+events = ["SessionEnd"]  # 在会话结束后触发
+command = "~/.message_board/hooks/claude-code/check-messages.sh"
+timeout = 30             # 超时时间（秒）
+
+# 运行条件
+[requires]
+bins = ["sqlite3"]       # 需要 sqlite3 命令
+
+# 环境变量
+[env]
+MESSAGE_BOARD_DIR = "~/.message_board"
+MESSAGE_CLIENT_ID = "claude-alice"  # 修改为你的客户端 ID

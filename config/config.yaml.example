@@ -1,0 +1,40 @@
+# Message Board 配置文件
+# 位置：~/.message_board/config.yaml
+
+# 客户端配置
+client:
+  id: "cli_alice"           # 唯一客户端 ID
+  name: "Alice CLI"         # 显示名称
+
+# 数据库配置
+database:
+  path: "~/.message_board/board.db"
+  wal_mode: true            # 启用 WAL 模式
+
+# Daemon 配置
+daemon:
+  enabled: true
+  poll_interval: 2          # 轮询间隔（秒）
+  watch_method: "watchdog"  # watchdog/inotify
+
+# 触发器配置
+trigger:
+  method: "tmux"            # tmux/hook/command
+  
+  # tmux 配置
+  tmux:
+    session: "ai-session"   # tmux 会话名
+    pane: "0"               # pane 编号
+    command: "claude --prompt '你有新消息来自 {sender}: {content}'"
+  
+  # hook 配置
+  hook:
+    path: "~/.message_board/hooks/claude-code/check-messages.sh"
+  
+  # 直接命令配置
+  command: "echo '新消息：{content}'"
+
+# 日志配置
+logging:
+  level: "INFO"             # DEBUG/INFO/WARNING/ERROR
+  file: "~/.message_board/daemon.log"
