@@ -310,13 +310,16 @@ def get_protocol() -> Dict[str, Any]:
         with open(protocol_path, 'r', encoding='utf-8') as f:
             protocol_content = f.read()
         return {
-            "uri": "protocol://current",
-            "text": protocol_content
+            "success": True,
+            "protocol": protocol_content,
+            "length": len(protocol_content),
+            "source": "MCP_COMMUNICATION_PROTOCOL.md"
         }
     else:
         return {
-            "uri": "protocol://current",
-            "text": "协议文档不存在"
+            "success": False,
+            "error": "协议文档不存在",
+            "expected_path": str(protocol_path)
         }
 
 
@@ -830,6 +833,14 @@ TOOLS = {
         },
         "handler": get_waiting_agents
     }
+},
+"get_protocol": {
+    "description": "获取 MCP 通信协议文档。用于新加入的AI快速了解协作规则、工具使用方法、任务分配流程等。返回最新的完整协议文档。",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    },
+    "handler": get_protocol
 }# 资源映射
 RESOURCES = {
     "protocol://current": {
@@ -896,6 +907,24 @@ def read_resource(uri: str) -> Dict[str, Any]:
         handler = RESOURCES[uri]["handler"]
         result = handler()
         
+        # get_protocol 现在返回工具格式，需要转换为资源格式
+        if uri == "protocol://current":
+            protocol_text = result.get("protocol", result.get("text", ""))
+            return {
+                "jsonrpc": "2.0",
+                "id": None,
+                "result": {
+                    "contents": [
+                        {
+                            "uri": uri,
+                            "mimeType": RESOURCES[uri]["mime_type"],
+                            "text": protocol_text
+                        }
+                    ]
+                }
+            }
+        
+        # 其他资源的处理
         return {
             "jsonrpc": "2.0",
             "id": None,
@@ -904,7 +933,7 @@ def read_resource(uri: str) -> Dict[str, Any]:
                     {
                         "uri": uri,
                         "mimeType": RESOURCES[uri]["mime_type"],
-                        "text": result["text"]
+                        "text": result.get("text", "")
                     }
                 ]
             }
