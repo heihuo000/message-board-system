@@ -226,6 +226,23 @@ def get_status() -> Dict[str, Any]:
     }
 
 
+def get_protocol() -> Dict[str, Any]:
+    """获取协议文档"""
+    protocol_path = Path(__file__).parent / "MCP_COMMUNICATION_PROTOCOL.md"
+    if protocol_path.exists():
+        with open(protocol_path, 'r', encoding='utf-8') as f:
+            protocol_content = f.read()
+        return {
+            "uri": "protocol://current",
+            "text": protocol_content
+        }
+    else:
+        return {
+            "uri": "protocol://current",
+            "text": "协议文档不存在"
+        }
+
+
 # 工具映射
 TOOLS = {
     "send_message": {
@@ -291,6 +308,17 @@ TOOLS = {
 }
 
 
+# 资源映射
+RESOURCES = {
+    "protocol://current": {
+        "name": "MCP 通信协议",
+        "description": "当前版本的 MCP 通信协议文档",
+        "mime_type": "text/plain",
+        "handler": get_protocol
+    }
+}
+
+
 def list_tools() -> Dict[str, Any]:
     """列出所有工具"""
     tools = []
@@ -308,6 +336,66 @@ def list_tools() -> Dict[str, Any]:
             "tools": tools
         }
     }
+
+
+def list_resources() -> Dict[str, Any]:
+    """列出所有资源"""
+    resources = []
+    for uri, info in RESOURCES.items():
+        resources.append({
+            "uri": uri,
+            "name": info["name"],
+            "description": info["description"],
+            "mimeType": info["mime_type"]
+        })
+    
+    return {
+        "jsonrpc": "2.0",
+        "id": None,
+        "result": {
+            "resources": resources
+        }
+    }
+
+
+def read_resource(uri: str) -> Dict[str, Any]:
+    """读取资源"""
+    if uri not in RESOURCES:
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32602,
+                "message": f"Unknown resource: {uri}"
+            }
+        }
+    
+    try:
+        handler = RESOURCES[uri]["handler"]
+        result = handler()
+        
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "result": {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": RESOURCES[uri]["mime_type"],
+                        "text": result["text"]
+                    }
+                ]
+            }
+        }
+    except Exception as e:
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32603,
+                "message": str(e)
+            }
+        }
 
 
 def call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -367,6 +455,17 @@ def process_request(request: Dict[str, Any]) -> Dict[str, Any]:
         response["id"] = request_id
         return response
     
+    elif method == "resources/list":
+        response = list_resources()
+        response["id"] = request_id
+        return response
+    
+    elif method == "resources/read":
+        uri = params.get("uri")
+        response = read_resource(uri)
+        response["id"] = request_id
+        return response
+    
     elif method == "initialize":
         return {
             "jsonrpc": "2.0",
@@ -374,7 +473,8 @@ def process_request(request: Dict[str, Any]) -> Dict[str, Any]:
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {
-                    "tools": {}
+                    "tools": {},
+                    "resources": {}
                 },
                 "serverInfo": {
                     "name": "message-board-server",
