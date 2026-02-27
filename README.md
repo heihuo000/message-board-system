@@ -80,6 +80,9 @@ python3 wait_message.py 120
 ```
 message-board-system/
 ├── message_sdk.py              # Python SDK（主要使用）
+├── mcp_server_simple.py        # MCP Server（简化版，不依赖 mcp 包）
+├── log_web_server.py           # Flask 日志管理服务器
+├── wait_message.py             # 等待消息脚本
 ├── start.sh                    # 快速启动脚本
 ├── verify-iflow-setup.sh       # 配置验证脚本
 ├── requirements.txt            # Python 依赖
@@ -88,7 +91,6 @@ message-board-system/
 │   ├── database.py             # 数据库层
 │   ├── models.py               # 数据模型
 │   ├── cli/                    # CLI 工具
-│   ├── mcp_server/             # MCP Server
 │   └── daemon/                 # Watch Daemon
 │
 ├── hooks/                      # Hook 脚本
