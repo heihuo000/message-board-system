@@ -24,18 +24,35 @@ def get_db_connection() -> sqlite3.Connection:
 
 
 def send_message(content: str, sender: str = "unknown", priority: str = "normal", 
-                 reply_to: Optional[str] = None) -> Dict[str, Any]:
-    """发送消息"""
+                 reply_to: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    发送消息
+    
+    Args:
+        content: 消息内容
+        sender: 发送者ID
+        priority: 优先级
+        reply_to: 回复的消息ID
+        session_id: 会话ID（用于区分同一代理的不同实例）
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     
     message_id = str(uuid.uuid4())
     timestamp = int(time.time())
     
+    # 如果没有提供session_id，自动生成一个
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    
+    # 将session_id存储到content前缀中（临时方案）
+    # 更好的方案是修改数据库表添加session_id字段
+    prefixed_content = f"[session:{session_id}] {content}"
+    
     cursor.execute("""
         INSERT INTO messages (id, sender, content, timestamp, read, reply_to, priority)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (message_id, sender, content, timestamp, 0, reply_to, priority))
+    """, (message_id, sender, prefixed_content, timestamp, 0, reply_to, priority))
     
     conn.commit()
     conn.close()
@@ -43,7 +60,8 @@ def send_message(content: str, sender: str = "unknown", priority: str = "normal"
     return {
         "success": True,
         "message_id": message_id,
-        "timestamp": timestamp
+        "timestamp": timestamp,
+        "session_id": session_id
     }
 
 
@@ -78,8 +96,16 @@ def cleanup_messages():
 
 
 def read_messages(unread_only: bool = False, limit: int = 10,
-                  sender: Optional[str] = None) -> Dict[str, Any]:
-    """读取消息（带自动清理）"""
+                  sender: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    读取消息（带自动清理）
+    
+    Args:
+        unread_only: 是否只读取未读消息
+        limit: 限制数量
+        sender: 筛选发送者
+        session_id: 筛选特定会话的消息
+    """
     # 先清理
     cleanup_messages()
     
@@ -94,6 +120,9 @@ def read_messages(unread_only: bool = False, limit: int = 10,
     if sender:
         query += " AND sender = ?"
         params.append(sender)
+    if session_id:
+        query += " AND content LIKE ?"
+        params.append(f"%[session:{session_id}]%")
 
     query += " ORDER BY timestamp DESC LIMIT ?"
     params.append(limit)
@@ -102,16 +131,30 @@ def read_messages(unread_only: bool = False, limit: int = 10,
     rows = cursor.fetchall()
     conn.close()
 
-    messages = [
-        {
+    messages = []
+    for row in rows:
+        content = row["content"]
+        msg_session_id = None
+        
+        # 解析session_id
+        if content.startswith("[session:"):
+            try:
+                session_start = content.index("[session:")
+                session_end = content.index("]", session_start)
+                msg_session_id = content[session_start + 9:session_end]
+                content = content[session_end + 2:].strip()  # 移除session前缀
+            except ValueError:
+                pass  # 解析失败，保持原样
+        
+        messages.append({
             "id": row["id"],
             "sender": row["sender"],
-            "content": row["content"],
+            "content": content,
             "timestamp": row["timestamp"],
             "read": bool(row["read"]),
-            "priority": row["priority"] or "normal"
-        }
-        for row in rows
+            "priority": row["priority"] or "normal",
+            "session_id": msg_session_id
+        })
     ]
 
     return {
@@ -121,7 +164,8 @@ def read_messages(unread_only: bool = False, limit: int = 10,
     }
 
 
-def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
+def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None, client_id: Optional[str] = None,
+                     session_id: Optional[str] = None) -> Dict[str, Any]:
     """
     等待新消息（阻塞等待）
     
@@ -129,6 +173,7 @@ def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None, client
         timeout: 超时时间（秒），默认 5 分钟
         last_seen: 最后看到的消息时间戳，只返回更新的消息
         client_id: 客户端ID，过滤掉自己的消息
+        session_id: 会话ID，只等待特定会话的消息（用于区分同一代理的不同实例）
     
     Returns:
         新消息或超时信息
@@ -149,6 +194,11 @@ def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None, client
             query += " AND sender != ?"
             params.append(client_id)
         
+        # 过滤会话ID（如果指定）
+        if session_id:
+            query += " AND content LIKE ?"
+            params.append(f"%[session:{session_id}]%")
+        
         if last_seen:
             query += " AND timestamp > ?"
             params.append(last_seen)
@@ -168,15 +218,29 @@ def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None, client
         if row:
             # 发现新消息
             checked_ids.add(row["id"])
+            
+            # 解析session_id
+            content = row["content"]
+            msg_session_id = None
+            if content.startswith("[session:"):
+                try:
+                    session_start = content.index("[session:")
+                    session_end = content.index("]", session_start)
+                    msg_session_id = content[session_start + 9:session_end]
+                    content = content[session_end + 2:].strip()
+                except ValueError:
+                    pass
+            
             return {
                 "success": True,
                 "message": {
                     "id": row["id"],
                     "sender": row["sender"],
-                    "content": row["content"],
+                    "content": content,
                     "timestamp": row["timestamp"],
                     "read": bool(row["read"]),
-                    "priority": row["priority"] or "normal"
+                    "priority": row["priority"] or "normal",
+                    "session_id": msg_session_id
                 },
                 "wait_time": time.time() - start_time
             }
@@ -414,51 +478,83 @@ def get_my_tasks(agent_id: str, status: Optional[str] = None,
 # 工具映射
 TOOLS = {
     "send_message": {
-        "description": "发送消息到留言簿",
+        "description": "发送消息到留言簿。用于AI代理之间通信、发送任务通知、回复消息等。消息会被记录并可被其他代理读取。",
         "parameters": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "消息内容"},
-                "sender": {"type": "string", "description": "发送者 ID"},
-                "priority": {"type": "string", "enum": ["normal", "high", "urgent"]},
-                "reply_to": {"type": "string", "description": "回复的消息 ID"}
+                "content": {
+                    "type": "string", 
+                    "description": "消息内容（建议100字以内，长内容请写到文件）"
+                },
+                "sender": {
+                    "type": "string", 
+                    "description": "发送者ID（必须使用固定ID：iflow/qwen/dnf-pvf-analyse/pvf-analyzer）"
+                },
+                "priority": {
+                    "type": "string", 
+                    "enum": ["normal", "high", "urgent"],
+                    "description": "消息优先级：normal(普通), high(重要), urgent(紧急)"
+                },
+                "reply_to": {
+                    "type": "string", 
+                    "description": "回复的消息ID（可选，用于回复特定消息）"
+                }
             },
             "required": ["content"]
         },
         "handler": send_message
     },
     "read_messages": {
-        "description": "读取留言簿消息",
+        "description": "读取留言簿消息。用于获取未读消息、历史消息或特定发送者的消息。批量读取可避免漏读消息。",
         "parameters": {
             "type": "object",
             "properties": {
-                "unread_only": {"type": "boolean", "description": "只读未读消息"},
-                "limit": {"type": "integer", "description": "限制数量"},
-                "sender": {"type": "string", "description": "发送者过滤"}
+                "unread_only": {
+                    "type": "boolean", 
+                    "description": "是否只读取未读消息（true=仅未读，false=全部消息）"
+                },
+                "limit": {
+                    "type": "integer", 
+                    "description": "限制返回的消息数量（默认10，建议100）"
+                },
+                "sender": {
+                    "type": "string", 
+                    "description": "筛选特定发送者的消息（可选）"
+                }
             }
         },
         "handler": read_messages
     },
     "wait_for_message": {
-        "description": "等待新消息（阻塞等待，有消息立即返回）",
+        "description": "等待新消息（阻塞式）。用于接收其他代理发送的消息，会自动过滤自己的消息。收到消息后立即返回，超时返回超时信息。",
         "parameters": {
             "type": "object",
             "properties": {
-                "timeout": {"type": "integer", "description": "超时时间（秒），默认 300"},
-                "last_seen": {"type": "integer", "description": "最后看到的消息时间戳"}
+                "timeout": {
+                    "type": "integer", 
+                    "description": "超时时间（秒），默认300秒（5分钟）"
+                },
+                "last_seen": {
+                    "type": "integer", 
+                    "description": "最后看到的消息时间戳（可选，只返回比此时间更新的消息）"
+                },
+                "client_id": {
+                    "type": "string",
+                    "description": "你的代理ID（用于过滤自己的消息，必须提供）"
+                }
             }
         },
         "handler": wait_for_message
     },
     "mark_read": {
-        "description": "标记消息已读",
+        "description": "标记消息为已读。用于标记已处理的消息，避免重复处理。批量标记提高效率。",
         "parameters": {
             "type": "object",
             "properties": {
                 "message_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "消息 ID 列表"
+                    "description": "要标记为已读的消息ID列表"
                 }
             },
             "required": ["message_ids"]
@@ -466,7 +562,7 @@ TOOLS = {
         "handler": mark_read
     },
     "get_status": {
-        "description": "获取系统状态",
+        "description": "获取留言簿系统状态。包括总消息数、未读消息数、最新消息时间等统计信息。",
         "parameters": {
             "type": "object",
             "properties": {}
@@ -474,68 +570,111 @@ TOOLS = {
         "handler": get_status
     },
     "get_protocol": {
-            "description": "获取 MCP 通信协议文档",
-            "parameters": {
-              "type": "object",
-              "properties": {}
-            },
-            "handler": get_protocol
+        "description": "获取MCP通信协议文档（最新版）。包含AI代理体系架构、分工调配原则、MCP工具调用顺序、协作流程等完整规范。新代理必须先调用此工具学习协议。",
+        "parameters": {
+          "type": "object",
+          "properties": {}
         },
-        "create_task": {
-            "description": "创建新任务",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "title": {"type": "string", "description": "任务标题"},
-                "description": {"type": "string", "description": "任务描述"},
-                "assigned_to": {"type": "string", "description": "分配给谁"},
-                "created_by": {"type": "string", "description": "创建者"},
-                "priority": {"type": "string", "enum": ["urgent", "high", "normal", "low"]}
-              },
-              "required": ["title"]
+        "handler": get_protocol
+    },
+    "create_task": {
+        "description": "创建新任务。用于任务分配者（iflow）将任务分配给其他代理。任务会被记录到数据库，可被查询和跟踪。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "title": {
+                "type": "string", 
+                "description": "任务标题（简明扼要）"
             },
-            "handler": create_task
-        },
-        "update_task": {
-            "description": "更新任务状态",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "task_id": {"type": "string", "description": "任务ID"},
-                "status": {"type": "string", "enum": ["pending", "running", "completed", "failed"]},
-                "result": {"type": "string", "description": "执行结果"}
-              },
-              "required": ["task_id"]
+            "description": {
+                "type": "string", 
+                "description": "任务详细描述（可选）"
             },
-            "handler": update_task
-        },
-        "get_tasks": {
-                "description": "获取任务列表",
-                "parameters": {
-                  "type": "object",
-                  "properties": {
-                    "assigned_to": {"type": "string", "description": "筛选分配给谁的任务"},
-                    "status": {"type": "string", "description": "筛选状态"},
-                    "limit": {"type": "integer", "description": "限制数量"}
-                  }
-                },
-                "handler": get_tasks
+            "assigned_to": {
+                "type": "string", 
+                "description": "任务分配给谁（必须使用固定ID：iflow/qwen/dnf-pvf-analyse/pvf-analyzer）"
             },
-            "get_my_tasks": {
-                "description": "查询自己的任务历史",
-                "parameters": {
-                  "type": "object",
-                  "properties": {
-                    "agent_id": {"type": "string", "description": "你的代理ID（iflow/qwen/dnf-pvf-analyse/pvf-analyzer）"},
-                    "status": {"type": "string", "description": "筛选状态（可选）"},
-                    "limit": {"type": "integer", "description": "返回数量，默认20"}
-                  },
-                  "required": ["agent_id"]
-                },
-                "handler": get_my_tasks
+            "created_by": {
+                "type": "string", 
+                "description": "任务创建者（通常是iflow）"
+            },
+            "priority": {
+                "type": "string", 
+                "enum": ["urgent", "high", "normal", "low"],
+                "description": "任务优先级"
             }
-        }
-# 资源映射
+          },
+          "required": ["title"]
+        },
+        "handler": create_task
+    },
+    "update_task": {
+        "description": "更新任务状态。用于任务执行者更新任务进度和结果。必须提供task_id。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "task_id": {
+                "type": "string", 
+                "description": "任务ID（必填）"
+            },
+            "status": {
+                "type": "string", 
+                "enum": ["pending", "running", "completed", "failed"],
+                "description": "任务状态：pending(待处理), running(执行中), completed(已完成), failed(失败)"
+            },
+            "result": {
+                "type": "string", 
+                "description": "任务执行结果（可选，任务完成时填写）"
+            }
+          },
+          "required": ["task_id"]
+        },
+        "handler": update_task
+    },
+    "get_tasks": {
+        "description": "获取任务列表。用于查询特定条件下的任务，可按分配者、状态筛选。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assigned_to": {
+                "type": "string", 
+                "description": "筛选分配给谁的代理（可选）"
+            },
+            "status": {
+                "type": "string", 
+                "description": "筛选任务状态（可选）"
+            },
+            "limit": {
+                "type": "integer", 
+                "description": "返回任务数量（默认10）"
+            }
+          }
+        },
+        "handler": get_tasks
+    },
+    "get_my_tasks": {
+        "description": "查询自己的任务历史。用于快速找到自己执行过的任务，查看任务状态和结果，了解工作负载。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+                "type": "string", 
+                "description": "你的代理ID（必填，必须是：iflow/qwen/dnf-pvf-analyse/pvf-analyzer）"
+            },
+            "status": {
+                "type": "string", 
+                "description": "筛选任务状态（可选）"
+            },
+            "limit": {
+                "type": "integer", 
+                "description": "返回任务数量（默认20）"
+            }
+          },
+          "required": ["agent_id"]
+        },
+        "handler": get_my_tasks
+    }
+}# 资源映射
 RESOURCES = {
     "protocol://current": {
         "name": "MCP 通信协议",

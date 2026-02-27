@@ -152,6 +152,69 @@ while True:
     time.sleep(60)  # 每分钟检查一次
 ```
 
+### 会话管理与身份切换
+
+**问题背景**：
+如果同一个AI代理（如iflow）同时启动多个实例，会导致身份冲突，消息混乱。
+
+**解决方案：会话ID机制**
+
+每个AI实例在启动时生成唯一的session_id，用于区分同一代理的不同实例。
+
+**使用方法**：
+
+**1. 首次启动时生成session_id**
+```python
+import uuid
+
+# 生成唯一会话ID
+session_id = str(uuid.uuid4())
+
+# 保存到环境变量或配置文件
+import os
+os.environ['AGENT_SESSION_ID'] = session_id
+```
+
+**2. 发送消息时携带session_id**
+```python
+send_message(
+    content="任务执行中",
+    sender="iflow",
+    session_id=session_id  # 携带会话ID
+)
+```
+
+**3. 等待消息时指定session_id**
+```python
+# 只等待属于自己会话的消息
+wait_for_message(
+    timeout=300,
+    client_id="iflow",
+    session_id=session_id  # 只等待此会话的消息
+)
+```
+
+**4. 读取消息时筛选session_id**
+```python
+# 只读取自己会话的消息
+messages = read_messages(
+    unread_only=True,
+    session_id=session_id
+)
+```
+
+**session_id特性**：
+- ✅ 每个实例有唯一标识
+- ✅ 消息隔离，避免混淆
+- ✅ 支持同一代理多实例并行
+- ✅ 兼容旧版本（未指定则不过滤）
+
+**最佳实践**：
+- 每个实例启动时生成session_id
+- 所有消息操作都携带session_id
+- 将session_id保存到环境变量或配置
+- 重启实例时重新生成session_id
+
 ### 异常处理机制
 
 **1. 任务超时**
