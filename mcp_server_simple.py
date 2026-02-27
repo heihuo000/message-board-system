@@ -121,13 +121,14 @@ def read_messages(unread_only: bool = False, limit: int = 10,
     }
 
 
-def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None) -> Dict[str, Any]:
+def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
     """
     等待新消息（阻塞等待）
     
     Args:
         timeout: 超时时间（秒），默认 5 分钟
         last_seen: 最后看到的消息时间戳，只返回更新的消息
+        client_id: 客户端ID，过滤掉自己的消息
     
     Returns:
         新消息或超时信息
@@ -142,6 +143,11 @@ def wait_for_message(timeout: int = 300, last_seen: Optional[int] = None) -> Dic
         # 查询未读消息
         query = "SELECT * FROM messages WHERE read = 0"
         params = []
+        
+        # 过滤发送者（不返回自己的消息）
+        if client_id:
+            query += " AND sender != ?"
+            params.append(client_id)
         
         if last_seen:
             query += " AND timestamp > ?"
